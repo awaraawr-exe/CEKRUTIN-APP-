@@ -23,16 +23,19 @@ import {PROMOTIVE_DISCLAIMER} from '../lib/hbmEvaluator';
 import {CertificateGenerator} from '../components/CertificateGenerator';
 
 interface EducationQuizViewProps {
-  activeMember: FamilyMember;
+  managerName: string;
+  activeMember: FamilyMember | null;
   certificates: CertificateRecord[];
   onIssueCertificate: (score: number, totalQuestions: number) => CertificateRecord;
 }
 
 export const EducationQuizView: React.FC<EducationQuizViewProps> = ({
+  managerName,
   activeMember,
   certificates,
   onIssueCertificate,
 }) => {
+  const participantName = activeMember?.name || managerName;
   const [selectedArticle, setSelectedArticle] = useState<EducationArticle | null>(
     EDUCATION_ARTICLES[0],
   );
@@ -81,7 +84,7 @@ export const EducationQuizView: React.FC<EducationQuizViewProps> = ({
               Pelajari panduan praktis pencegahan hipertensi, diabetes, dan kolesterol, lalu
               selesaikan kuis singkat 5 soal (nilai minimal 80) untuk mendapatkan{' '}
               <strong>E-Sertifikat Keluarga Sadar Sehat</strong> atas nama{' '}
-              <strong>{activeMember.name}</strong>.
+              <strong>{participantName}</strong>.
             </p>
             <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 pt-1">
               <span>{EDUCATION_ARTICLES.length} Artikel Ringkas</span>
@@ -212,7 +215,7 @@ export const EducationQuizView: React.FC<EducationQuizViewProps> = ({
                 Kuis Interaktif Pencegahan PTM (5 Soal)
               </h2>
               <p className="text-xs text-slate-500">
-                Peserta aktif: <strong>{activeMember.name}</strong> · Skor kelulusan minimal{' '}
+                Peserta aktif: <strong>{participantName}</strong> · Skor kelulusan minimal{' '}
                 <span className="font-mono font-semibold">80/100</span>
               </p>
             </div>

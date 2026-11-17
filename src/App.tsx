@@ -1,5 +1,4 @@
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
-import {onAuthStateChanged, User} from 'firebase/auth';
 import {
   Activity,
   BookOpenCheck,
@@ -9,6 +8,7 @@ import {
   Lock,
   LogOut,
   Smartphone,
+  UserPlus,
   Users,
   WifiOff,
 } from 'lucide-react';
@@ -30,35 +30,39 @@ import {
   loadCekRutinStore,
   saveCekRutinStore,
 } from './lib/storage';
-import {auth, signInWithGoogle, signOutUser} from './lib/firebase';
-import {
-  ensureFamilyWorkspace,
-  subscribeFamilyWorkspace,
-  syncActiveMemberId,
-  syncAddCertificate,
-  syncAddHealthCheck,
-  syncAddReminder,
-  syncAddVisit,
-  syncDeleteHealthCheck,
-  syncDeleteMember,
-  syncDeleteReminder,
-  syncDeleteVisit,
-  syncManagerAccount,
-  syncReminderTriggered,
-  syncRoutineLog,
-  syncToggleReminder,
-  syncToggleVisitComplete,
-  syncUpsertMember,
-} from './lib/firestoreSync';
 import {calculateBmi, evaluateFullHealthCheck} from './lib/hbmEvaluator';
 import {useOnlineStatus, usePWAInstall} from './hooks/usePWAInstall';
 import {PWAInstallModal} from './components/PWAInstallModal';
-import {GoogleLoginSplash} from './components/GoogleLoginSplash';
+import {GoogleLoginSplash, LocalGoogleUser} from './components/GoogleLoginSplash';
 import {DashboardRoutineView} from './views/DashboardRoutineView';
 import {HealthCheckView} from './views/HealthCheckView';
 import {RemindersAgendaView} from './views/RemindersAgendaView';
 import {EducationQuizView} from './views/EducationQuizView';
 import {FamilyProfilesView} from './views/FamilyProfilesView';
+
+const AUTH_SESSION_KEY = 'cekrutin_auth_session_v2';
+
+interface PersistedAuthSession {
+  status: 'LoggedIn';
+  uid: string;
+  name: string;
+  email: string;
+  loggedInAt: string;
+}
+
+function readPersistedSession(): PersistedAuthSession | null {
+  try {
+    const raw = window.localStorage.getItem(AUTH_SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as PersistedAuthSession;
+    if (parsed && parsed.status === 'LoggedIn' && parsed.uid && parsed.email) {
+      return parsed;
+    }
+  } catch {
+    // Ignore parse error
+  }
+  return null;
+}
 
 const NAV_ITEMS: Array<{
   id: AppTab;
@@ -74,8 +78,7 @@ const NAV_ITEMS: Array<{
 ];
 
 export default function App() {
-  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
-  const [authReady, setAuthReady] = useState(false);
+  const [session, setSession] = useState<PersistedAuthSession | null>(() => readPersistedSession());
   const [store, setStore] = useState<CekRutinStore | null>(null);
   const [activeTab, setActiveTab] = useState<AppTab>('beranda');
   const [showPwaModal, setShowPwaModal] = useState(false);
@@ -87,84 +90,38 @@ export default function App() {
   const isOnline = useOnlineStatus();
   const {isInstalled} = usePWAInstall();
 
-  // Persistent Firebase Auth state listener
+  // Load persistent local IndexedDB/localStorage workspace whenever user session is LoggedIn
   useEffect(() => {
-    const unsubAuth = onAuthStateChanged(auth, (user) => {
-      setFirebaseUser(user);
-      setAuthReady(true);
-      if (!user) {
-        setStore(null);
-      }
-    });
-    return () => unsubAuth();
-  }, []);
-
-  // Load local offline cache immediately & connect Firestore real-time workspace for signed-in Google manager
-  useEffect(() => {
-    if (!firebaseUser) return;
+    if (!session) {
+      setStore(null);
+      return;
+    }
     let active = true;
-    let unsubFirestore: (() => void) | undefined;
-
-    const uid = firebaseUser.uid;
-    const identity = {
-      uid,
-      name: firebaseUser.displayName,
-      email: firebaseUser.email,
-      photoUrl: firebaseUser.photoURL,
-    };
-
-    loadCekRutinStore(identity).then((cached) => {
+    loadCekRutinStore({
+      uid: session.uid,
+      name: session.name,
+      email: session.email,
+    }).then((loaded) => {
       if (!active) return;
-      // Always reflect latest Google name/email/photo
       const hydrated: CekRutinStore = {
-        ...cached,
+        ...loaded,
         manager: {
-          ...cached.manager,
-          id: uid,
-          name: cached.manager.name || firebaseUser.displayName || 'Pengelola Keluarga',
-          email: firebaseUser.email || cached.manager.email || '',
-          photoUrl: firebaseUser.photoURL || cached.manager.photoUrl,
+          ...loaded.manager,
+          id: session.uid,
+          name: loaded.manager.name || session.name,
+          email: session.email,
         },
       };
       setStore(hydrated);
     });
-
-    ensureFamilyWorkspace(firebaseUser)
-      .then(() => {
-        if (!active) return;
-        unsubFirestore = subscribeFamilyWorkspace(firebaseUser, (partial) => {
-          if (!active) return;
-          setStore((prev) => {
-            const base = prev || createDefaultStore(identity);
-            const next: CekRutinStore = {
-              ...base,
-              ...partial,
-              manager: partial.manager
-                ? {
-                    ...base.manager,
-                    ...partial.manager,
-                    isLocked: base.manager.isLocked,
-                  }
-                : base.manager,
-            };
-            void saveCekRutinStore(next, uid);
-            return next;
-          });
-        });
-      })
-      .catch((err) => {
-        console.warn('Firestore sync deferred (offline/network):', err);
-      });
-
     return () => {
       active = false;
-      if (unsubFirestore) unsubFirestore();
     };
-  }, [firebaseUser]);
+  }, [session]);
 
   const updateStore = useCallback(
     (updater: (prev: CekRutinStore) => CekRutinStore) => {
-      const uid = firebaseUser?.uid || 'default';
+      const uid = session?.uid || 'default';
       setStore((prev) => {
         if (!prev) return prev;
         const next = updater(prev);
@@ -172,12 +129,12 @@ export default function App() {
         return next;
       });
     },
-    [firebaseUser],
+    [session],
   );
 
   // Periodic Habit Loop Reminder Check (Web Notification API + In-App Cue)
   useEffect(() => {
-    if (!store || !firebaseUser) return;
+    if (!store || !session) return;
     const checkReminders = () => {
       const now = new Date();
       const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
@@ -199,7 +156,6 @@ export default function App() {
           } else {
             setCueBanner(bodyText);
           }
-          void syncReminderTriggered(firebaseUser.uid, rem.id, today).catch(() => {});
         });
 
         updateStore((prev) => ({
@@ -214,44 +170,47 @@ export default function App() {
     checkReminders();
     const timer = window.setInterval(checkReminders, 30000);
     return () => window.clearInterval(timer);
-  }, [store, firebaseUser, updateStore]);
+  }, [store, session, updateStore]);
 
   const activeMember = useMemo(() => {
-    if (!store) return null;
+    if (!store || store.members.length === 0) return null;
     return store.members.find((m) => m.id === store.activeMemberId) || store.members[0] || null;
   }, [store]);
 
-  const handleGoogleLogin = async () => {
-    const user = await signInWithGoogle();
-    setFirebaseUser(user);
+  const handleCompleteLogin = (account: LocalGoogleUser) => {
+    const newSession: PersistedAuthSession = {
+      status: 'LoggedIn',
+      uid: account.uid,
+      name: account.name,
+      email: account.email,
+      loggedInAt: new Date().toISOString(),
+    };
+    try {
+      window.localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(newSession));
+    } catch {
+      // Ignore storage errors
+    }
+    setSession(newSession);
     setActiveTab('beranda');
   };
 
-  const handleSignOut = async () => {
-    await signOutUser();
-    setFirebaseUser(null);
+  const handleSignOut = () => {
+    try {
+      window.localStorage.removeItem(AUTH_SESSION_KEY);
+    } catch {
+      // Ignore storage errors
+    }
+    setSession(null);
     setStore(null);
     setActiveTab('beranda');
   };
 
-  // Loading auth state check
-  if (!authReady) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
-        <div className="text-center space-y-2">
-          <Activity className="w-8 h-8 text-teal-600 mx-auto" />
-          <p className="text-sm font-semibold text-slate-700">Memeriksa sesi masuk Google...</p>
-        </div>
-      </div>
-    );
-  }
-
-  // Splash Screen / Google Sign-In Gate when not signed in
-  if (!firebaseUser) {
+  // Splash Screen / Google Sign-In Gate when not LoggedIn
+  if (!session) {
     return (
       <>
         <GoogleLoginSplash
-          onGoogleLogin={handleGoogleLogin}
+          onCompleteLogin={handleCompleteLogin}
           onOpenPwaGuide={() => setShowPwaModal(true)}
         />
         <PWAInstallModal open={showPwaModal} onClose={() => setShowPwaModal(false)} />
@@ -259,13 +218,13 @@ export default function App() {
     );
   }
 
-  if (!store || !activeMember) {
+  if (!store) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
         <div className="text-center space-y-2">
           <Activity className="w-8 h-8 text-teal-600 mx-auto" />
           <p className="text-sm font-semibold text-slate-700">
-            Menyiapkan dasbor keluarga {firebaseUser.displayName || ''}...
+            Membuka dasbor keluarga {session.name}...
           </p>
         </div>
       </div>
@@ -326,25 +285,28 @@ export default function App() {
     );
   }
 
-  const uid = firebaseUser.uid;
   const today = getTodayDateString();
-  const todayLog = getOrCreateRoutineLog(store.routineLogs, activeMember.id, today);
-  const streakDays = calculateMemberStreak(store.routineLogs, activeMember.id);
+  const todayLog = activeMember
+    ? getOrCreateRoutineLog(store.routineLogs, activeMember.id, today)
+    : null;
+  const streakDays = activeMember ? calculateMemberStreak(store.routineLogs, activeMember.id) : 0;
 
-  const memberLatestHealth = store.healthChecks
-    .filter((h) => h.memberId === activeMember.id)
-    .sort((a, b) => new Date(b.recordedAt).getTime() - new Date(a.recordedAt).getTime())[0];
+  const memberLatestHealth = activeMember
+    ? store.healthChecks
+        .filter((h) => h.memberId === activeMember.id)
+        .sort((a, b) => new Date(b.recordedAt).getTime() - new Date(a.recordedAt).getTime())[0]
+    : undefined;
 
-  // Mutators (Optimistic local + Firestore sync)
+  // Mutators
   const upsertTodayRoutine = (
     mutator: (
       log: ReturnType<typeof getOrCreateRoutineLog>,
     ) => ReturnType<typeof getOrCreateRoutineLog>,
   ) => {
-    const current = getOrCreateRoutineLog(store.routineLogs, activeMember.id, today);
-    const updated = mutator(current);
-
+    if (!activeMember) return;
     updateStore((prev) => {
+      const current = getOrCreateRoutineLog(prev.routineLogs, activeMember.id, today);
+      const updated = mutator(current);
       const exists = prev.routineLogs.some((l) => l.id === updated.id);
       return {
         ...prev,
@@ -353,7 +315,6 @@ export default function App() {
           : [...prev.routineLogs, updated],
       };
     });
-    void syncRoutineLog(uid, updated).catch(() => {});
   };
 
   const handleUpdateWater = (delta: number) => {
@@ -414,7 +375,6 @@ export default function App() {
       ...prev,
       healthChecks: [newRecord, ...prev.healthChecks],
     }));
-    void syncAddHealthCheck(uid, newRecord).catch(() => {});
   };
 
   const handleDeleteHealthCheck = (recordId: string) => {
@@ -422,12 +382,10 @@ export default function App() {
       ...prev,
       healthChecks: prev.healthChecks.filter((h) => h.id !== recordId),
     }));
-    void syncDeleteHealthCheck(uid, recordId).catch(() => {});
   };
 
   const handleQuickSchedulePuskesmas = (memberId: string, reason: string) => {
     updateStore((prev) => ({...prev, activeMemberId: memberId}));
-    void syncActiveMemberId(uid, memberId).catch(() => {});
     setPrefillAgendaReason(reason);
     setActiveTab('agenda');
   };
@@ -438,17 +396,13 @@ export default function App() {
       ...prev,
       reminders: [...prev.reminders, created],
     }));
-    void syncAddReminder(uid, created).catch(() => {});
   };
 
   const handleToggleReminder = (id: string) => {
-    const target = store.reminders.find((r) => r.id === id);
-    const nextEnabled = target ? !target.enabled : true;
     updateStore((prev) => ({
       ...prev,
-      reminders: prev.reminders.map((r) => (r.id === id ? {...r, enabled: nextEnabled} : r)),
+      reminders: prev.reminders.map((r) => (r.id === id ? {...r, enabled: !r.enabled} : r)),
     }));
-    void syncToggleReminder(uid, id, nextEnabled).catch(() => {});
   };
 
   const handleDeleteReminder = (id: string) => {
@@ -456,7 +410,6 @@ export default function App() {
       ...prev,
       reminders: prev.reminders.filter((r) => r.id !== id),
     }));
-    void syncDeleteReminder(uid, id).catch(() => {});
   };
 
   const handleAddVisit = (visit: Omit<FaskesVisit, 'id' | 'completed'>) => {
@@ -465,19 +418,15 @@ export default function App() {
       ...prev,
       faskesVisits: [...prev.faskesVisits, created],
     }));
-    void syncAddVisit(uid, created).catch(() => {});
   };
 
   const handleToggleVisitComplete = (id: string) => {
-    const target = store.faskesVisits.find((v) => v.id === id);
-    const nextCompleted = target ? !target.completed : true;
     updateStore((prev) => ({
       ...prev,
       faskesVisits: prev.faskesVisits.map((v) =>
-        v.id === id ? {...v, completed: nextCompleted} : v,
+        v.id === id ? {...v, completed: !v.completed} : v,
       ),
     }));
-    void syncToggleVisitComplete(uid, id, nextCompleted).catch(() => {});
   };
 
   const handleDeleteVisit = (id: string) => {
@@ -485,7 +434,6 @@ export default function App() {
       ...prev,
       faskesVisits: prev.faskesVisits.filter((v) => v.id !== id),
     }));
-    void syncDeleteVisit(uid, id).catch(() => {});
   };
 
   const handleIssueCertificate = (score: number, totalQuestions: number): CertificateRecord => {
@@ -494,8 +442,8 @@ export default function App() {
       certificateNumber: `CR-${new Date().getFullYear()}-${String(
         Math.floor(1000 + Math.random() * 9000),
       )}`,
-      recipientName: activeMember.name,
-      memberRole: activeMember.role,
+      recipientName: activeMember?.name || store.manager.name,
+      memberRole: activeMember?.role || 'Pengelola',
       score,
       totalQuestions,
       issuedAt: new Date().toISOString(),
@@ -504,13 +452,11 @@ export default function App() {
       ...prev,
       certificates: [cert, ...prev.certificates],
     }));
-    void syncAddCertificate(uid, cert).catch(() => {});
     return cert;
   };
 
   const handleSelectMember = (memberId: string) => {
     updateStore((prev) => ({...prev, activeMemberId: memberId}));
-    void syncActiveMemberId(uid, memberId).catch(() => {});
   };
 
   const handleAddMember = (member: Omit<FamilyMember, 'id' | 'createdAt'>) => {
@@ -524,8 +470,6 @@ export default function App() {
       members: [...prev.members, created],
       activeMemberId: created.id,
     }));
-    void syncUpsertMember(uid, created, true).catch(() => {});
-    void syncActiveMemberId(uid, created.id).catch(() => {});
   };
 
   const handleUpdateMember = (updated: FamilyMember) => {
@@ -533,40 +477,36 @@ export default function App() {
       ...prev,
       members: prev.members.map((m) => (m.id === updated.id ? updated : m)),
     }));
-    void syncUpsertMember(uid, updated, false).catch(() => {});
   };
 
   const handleDeleteMember = (memberId: string) => {
     const remaining = store.members.filter((m) => m.id !== memberId);
-    if (remaining.length === 0) return;
     const nextActiveId =
-      store.activeMemberId === memberId ? remaining[0].id : store.activeMemberId;
+      remaining.length === 0
+        ? ''
+        : store.activeMemberId === memberId
+          ? remaining[0].id
+          : store.activeMemberId;
 
     updateStore((prev) => ({
       ...prev,
       members: remaining,
       activeMemberId: nextActiveId,
     }));
-    void syncDeleteMember(uid, memberId).catch(() => {});
-    if (nextActiveId !== store.activeMemberId) {
-      void syncActiveMemberId(uid, nextActiveId).catch(() => {});
-    }
   };
 
   const handleUpdateManager = (manager: FamilyManagerAccount) => {
     updateStore((prev) => ({...prev, manager}));
-    void syncManagerAccount(uid, manager).catch(() => {});
   };
 
   const handleResetDemoData = () => {
     const fresh = createDefaultStore({
-      uid,
-      name: firebaseUser.displayName,
-      email: firebaseUser.email,
-      photoUrl: firebaseUser.photoURL,
+      uid: session.uid,
+      name: session.name,
+      email: session.email,
     });
     setStore(fresh);
-    void saveCekRutinStore(fresh, uid);
+    void saveCekRutinStore(fresh, session.uid);
   };
 
   return (
@@ -595,18 +535,29 @@ export default function App() {
           >
             Anggota Keluarga Aktif
           </label>
-          <select
-            id="desktop-member-select"
-            value={activeMember.id}
-            onChange={(e) => handleSelectMember(e.target.value)}
-            className="w-full min-h-[42px] rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-900 focus:outline-2 focus:outline-teal-600 cursor-pointer"
-          >
-            {store.members.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name} ({m.role})
-              </option>
-            ))}
-          </select>
+          {store.members.length > 0 && activeMember ? (
+            <select
+              id="desktop-member-select"
+              value={activeMember.id}
+              onChange={(e) => handleSelectMember(e.target.value)}
+              className="w-full min-h-[42px] rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-900 focus:outline-2 focus:outline-teal-600 cursor-pointer"
+            >
+              {store.members.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name} ({m.role})
+                </option>
+              ))}
+            </select>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setActiveTab('keluarga')}
+              className="w-full min-h-[42px] rounded-xl border border-dashed border-teal-300 bg-teal-50/70 hover:bg-teal-50 px-3 text-xs font-semibold text-teal-800 flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <UserPlus className="w-3.5 h-3.5" />
+              <span>Tambah Anggota Pertama</span>
+            </button>
+          )}
         </div>
 
         {/* Navigation Links */}
@@ -648,22 +599,13 @@ export default function App() {
           )}
           <div className="flex items-center justify-between gap-2 px-1">
             <div className="flex items-center gap-2.5 min-w-0">
-              {store.manager.photoUrl ? (
-                <img
-                  src={store.manager.photoUrl}
-                  alt={store.manager.name}
-                  referrerPolicy="no-referrer"
-                  className="w-8 h-8 rounded-full object-cover border border-slate-200 shrink-0"
-                />
-              ) : (
-                <div className="w-8 h-8 rounded-full bg-teal-600 text-white text-xs font-bold flex items-center justify-center shrink-0">
-                  {store.manager.name.charAt(0).toUpperCase()}
-                </div>
-              )}
+              <div className="w-8 h-8 rounded-full bg-teal-600 text-white text-xs font-bold flex items-center justify-center shrink-0">
+                {store.manager.name.charAt(0).toUpperCase()}
+              </div>
               <div className="min-w-0">
                 <p className="text-xs font-bold text-slate-800 truncate">{store.manager.name}</p>
                 <p className="text-[11px] text-slate-500 truncate">
-                  {store.manager.email || store.manager.puskesmasName}
+                  {store.manager.email || store.manager.puskesmasName || 'Pengelola Keluarga'}
                 </p>
               </div>
             </div>
@@ -700,18 +642,28 @@ export default function App() {
           {/* Zone 2: Mobile Member Switcher / Desktop Quick Nav Links */}
           <div className="flex-1 flex items-center justify-center min-w-0">
             <div className="lg:hidden w-full max-w-[190px]">
-              <select
-                aria-label="Pilih Anggota Keluarga"
-                value={activeMember.id}
-                onChange={(e) => handleSelectMember(e.target.value)}
-                className="w-full min-h-[36px] rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-xs font-semibold text-slate-800 truncate"
-              >
-                {store.members.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name} ({m.role})
-                  </option>
-                ))}
-              </select>
+              {store.members.length > 0 && activeMember ? (
+                <select
+                  aria-label="Pilih Anggota Keluarga"
+                  value={activeMember.id}
+                  onChange={(e) => handleSelectMember(e.target.value)}
+                  className="w-full min-h-[36px] rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-xs font-semibold text-slate-800 truncate"
+                >
+                  {store.members.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name} ({m.role})
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('keluarga')}
+                  className="w-full min-h-[36px] rounded-lg border border-teal-200 bg-teal-50 px-2.5 text-xs font-semibold text-teal-800 truncate cursor-pointer"
+                >
+                  + Tambah Anggota
+                </button>
+              )}
             </div>
 
             <nav className="hidden lg:flex items-center gap-6 text-sm font-medium text-slate-600">
@@ -763,8 +715,7 @@ export default function App() {
               <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-2.5 text-xs font-medium text-amber-950 flex items-center gap-2">
                 <WifiOff className="w-4 h-4 text-amber-700 shrink-0" />
                 <span>
-                  Mode Offline Aktif — Perubahan disimpan lokal dan akan tersinkron otomatis saat
-                  online.
+                  Mode Offline Aktif — Seluruh perubahan disimpan permanen di perangkat Anda.
                 </span>
               </div>
             )}
@@ -812,6 +763,7 @@ export default function App() {
               onAddHealthCheck={handleAddHealthCheck}
               onDeleteHealthCheck={handleDeleteHealthCheck}
               onQuickSchedulePuskesmas={handleQuickSchedulePuskesmas}
+              onAddFirstMember={() => setActiveTab('keluarga')}
             />
           )}
 
@@ -830,11 +782,13 @@ export default function App() {
               onAddVisit={handleAddVisit}
               onToggleVisitComplete={handleToggleVisitComplete}
               onDeleteVisit={handleDeleteVisit}
+              onAddFirstMember={() => setActiveTab('keluarga')}
             />
           )}
 
           {activeTab === 'edukasi' && (
             <EducationQuizView
+              managerName={store.manager.name}
               activeMember={activeMember}
               certificates={store.certificates}
               onIssueCertificate={handleIssueCertificate}

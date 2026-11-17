@@ -13,6 +13,7 @@ import {
   Salad,
   Square,
   Stethoscope,
+  UserPlus,
 } from 'lucide-react';
 import {
   AppTab,
@@ -29,8 +30,8 @@ interface DashboardRoutineViewProps {
   managerName: string;
   managerEmail?: string;
   familyMembers: FamilyMember[];
-  activeMember: FamilyMember;
-  todayLog: DailyRoutineLog;
+  activeMember: FamilyMember | null;
+  todayLog: DailyRoutineLog | null;
   streakDays: number;
   latestHealthCheck?: HealthCheckRecord;
   upcomingVisits: FaskesVisit[];
@@ -88,6 +89,51 @@ export const DashboardRoutineView: React.FC<DashboardRoutineViewProps> = ({
     }, 1000);
     return () => window.clearInterval(id);
   }, [activeTimer, onAddMicroActivity]);
+
+  if (!activeMember || !todayLog || familyMembers.length === 0) {
+    return (
+      <div className="space-y-6">
+        <section className="rounded-2xl bg-white border border-slate-200 p-6 sm:p-10 text-center space-y-5 max-w-2xl mx-auto">
+          <div className="w-14 h-14 rounded-2xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center mx-auto">
+            <UserPlus className="w-7 h-7" />
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-xs font-semibold text-teal-700">
+              Pengelola Keluarga: {managerName}
+              {managerEmail ? ` · ${managerEmail}` : ''}
+            </p>
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">
+              Selamat Datang di CEKRutin
+            </h1>
+            <p className="text-sm text-slate-600 leading-relaxed max-w-lg mx-auto">
+              Dasbor Anda masih bersih (0 anggota keluarga, 0 log harian, dan 0 riwayat pemeriksaan).
+              Tambahkan profil anggota keluarga pertama Anda—seperti Ayah, Ibu, Anak, atau
+              Lansia—untuk mulai mencatat rutinitas sehat dan memantau cek kesehatan.
+            </p>
+          </div>
+
+          <div className="pt-1 flex flex-wrap items-center justify-center gap-3">
+            <button
+              type="button"
+              onClick={() => onNavigateTab('keluarga')}
+              className="min-h-[48px] px-6 py-3 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-sm font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer"
+            >
+              <UserPlus className="w-4 h-4" />
+              <span>Tambah Anggota Keluarga Pertama</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onNavigateTab('edukasi')}
+              className="min-h-[48px] px-5 py-3 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 text-sm font-semibold transition-colors cursor-pointer"
+            >
+              Baca Edukasi PTM
+            </button>
+          </div>
+        </section>
+      </div>
+    );
+  }
 
   const waterTarget = activeMember.targetWaterGlasses || 8;
   const waterPct = Math.min(100, Math.round((todayLog.waterGlasses / waterTarget) * 100));

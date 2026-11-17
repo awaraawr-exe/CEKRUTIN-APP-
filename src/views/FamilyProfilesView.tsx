@@ -182,7 +182,7 @@ export const FamilyProfilesView: React.FC<FamilyProfilesViewProps> = ({
             className="min-h-[42px] px-3.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700 inline-flex items-center gap-1.5 cursor-pointer"
           >
             <RotateCcw className="w-4 h-4" />
-            Atur Ulang Data Awal
+            Kosongkan Semua Data
           </button>
         </div>
       </div>
@@ -203,6 +203,17 @@ export const FamilyProfilesView: React.FC<FamilyProfilesViewProps> = ({
           <h2>Pilih atau Pantau Profil Anggota Keluarga</h2>
         </div>
 
+        {store.members.length === 0 ? (
+          <div className="rounded-2xl bg-white border border-dashed border-slate-300 p-6 text-center space-y-2">
+            <p className="text-sm font-bold text-slate-800">
+              Belum Ada Anggota Keluarga Terdaftar (0 Profil)
+            </p>
+            <p className="text-xs text-slate-500 max-w-md mx-auto">
+              Gunakan formulir <strong>Tambah Anggota Keluarga Baru</strong> di bawah ini untuk
+              mendaftarkan profil keluarga Anda (Ayah, Ibu, Anak, atau Lansia).
+            </p>
+          </div>
+        ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
           {store.members.map((member) => {
             const isActive = member.id === store.activeMemberId;
@@ -270,21 +281,20 @@ export const FamilyProfilesView: React.FC<FamilyProfilesViewProps> = ({
                   >
                     <Pencil className="w-4 h-4" />
                   </button>
-                  {store.members.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => onDeleteMember(member.id)}
-                      aria-label={`Hapus profil ${member.name}`}
-                      className="min-h-[40px] min-w-[40px] rounded-xl border border-slate-200 bg-white hover:bg-red-50 text-slate-400 hover:text-red-600 flex items-center justify-center cursor-pointer"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => onDeleteMember(member.id)}
+                    aria-label={`Hapus profil ${member.name}`}
+                    className="min-h-[40px] min-w-[40px] rounded-xl border border-slate-200 bg-white hover:bg-red-50 text-slate-400 hover:text-red-600 flex items-center justify-center cursor-pointer"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
               </article>
             );
           })}
         </div>
+        )}
       </section>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
@@ -316,7 +326,7 @@ export const FamilyProfilesView: React.FC<FamilyProfilesViewProps> = ({
               <input
                 type="text"
                 required
-                placeholder="Mis. Kakek Hasan"
+                placeholder="Masukkan nama lengkap anggota keluarga"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 className="w-full min-h-[44px] rounded-xl border border-slate-300 px-3 text-sm focus:outline-2 focus:outline-teal-600"

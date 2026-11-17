@@ -1,4 +1,4 @@
-import React, {useMemo, useState} from 'react';
+import React, {useEffect, useMemo, useState} from 'react';
 import {
   Bell,
   BellRing,
@@ -12,13 +12,14 @@ import {
   Download,
   Plus,
   Trash2,
+  UserPlus,
 } from 'lucide-react';
 import {FamilyMember, FaskesVisit, RoutineReminder} from '../types/health';
 import {downloadVisitIcsFile} from '../lib/storage';
 
 interface RemindersAgendaViewProps {
   members: FamilyMember[];
-  activeMember: FamilyMember;
+  activeMember: FamilyMember | null;
   defaultFacilityName: string;
   reminders: RoutineReminder[];
   faskesVisits: FaskesVisit[];
@@ -30,6 +31,7 @@ interface RemindersAgendaViewProps {
   onAddVisit: (visit: Omit<FaskesVisit, 'id' | 'completed'>) => void;
   onToggleVisitComplete: (id: string) => void;
   onDeleteVisit: (id: string) => void;
+  onAddFirstMember: () => void;
 }
 
 const MONTH_NAMES_ID = [
@@ -63,6 +65,7 @@ export const RemindersAgendaView: React.FC<RemindersAgendaViewProps> = ({
   onAddVisit,
   onToggleVisitComplete,
   onDeleteVisit,
+  onAddFirstMember,
 }) => {
   const [notifPermission, setNotifPermission] = useState<string>(() =>
     typeof Notification !== 'undefined' ? Notification.permission : 'unsupported',
@@ -73,11 +76,11 @@ export const RemindersAgendaView: React.FC<RemindersAgendaViewProps> = ({
   const [remTitle, setRemTitle] = useState('Minum Air Putih & Peregangan');
   const [remCategory, setRemCategory] = useState<RoutineReminder['category']>('air');
   const [remTime, setRemTime] = useState('09:00');
-  const [remMemberId, setRemMemberId] = useState(activeMember.id);
+  const [remMemberId, setRemMemberId] = useState(activeMember?.id || '');
 
   // Visit form
   const todayIso = new Date().toISOString().slice(0, 10);
-  const [visMemberId, setVisMemberId] = useState(activeMember.id);
+  const [visMemberId, setVisMemberId] = useState(activeMember?.id || '');
   const [visFacility, setVisFacility] = useState(defaultFacilityName || 'Puskesmas Kecamatan');
   const [visService, setVisService] = useState(
     prefillReason ? 'Kontrol & Konsultasi Hasil Skrining' : 'Cek Rutin Posbindu PTM',
@@ -92,68 +95,12 @@ export const RemindersAgendaView: React.FC<RemindersAgendaViewProps> = ({
   const [calMonth, setCalMonth] = useState(now.getMonth());
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
-  const requestNotificationPermission = async () => {
-    if (typeof Notification === 'undefined') {
-      setNotifPermission('unsupported');
-      setNotifFeedback('Browser ini tidak mendukung Web Notification API.');
-      return;
+  useEffect(() => {
+    if (activeMember?.id) {
+      setRemMemberId((prev) => (members.some((m) => m.id === prev) ? prev : activeMember.id));
+      setVisMemberId((prev) => (members.some((m) => m.id === prev) ? prev : activeMember.id));
     }
-    const perm = await Notification.requestPermission();
-    setNotifPermission(perm);
-    if (perm === 'granted') {
-      new Notification('CEKRutin · Pengingat Aktif', {
-        body: 'Notifikasi pengingat rutinitas sehat dan jadwal Puskesmas telah diaktifkan.',
-        icon: '/pwa-192x192.png',
-      });
-      setNotifFeedback('Notifikasi browser berhasil diaktifkan dan diuji.');
-    } else {
-      setNotifFeedback('Izin notifikasi belum diberikan di pengaturan browser.');
-    }
-  };
-
-  const sendTestNotification = () => {
-    if (typeof Notification === 'undefined') {
-      setNotifFeedback('Browser tidak mendukung Notification API.');
-      return;
-    }
-    if (Notification.permission === 'granted') {
-      new Notification('CEKRutin · Pengingat Rutinitas Sehat', {
-        body: `Waktunya cek kebiasaan sehat untuk ${activeMember.name} — Ingat, Periksa, Jaga Sehat!`,
-        icon: '/pwa-192x192.png',
-      });
-      setNotifFeedback('Notifikasi uji coba dikirim.');
-    } else {
-      requestNotificationPermission();
-    }
-  };
-
-  const handleAddReminder = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!remTitle.trim()) return;
-    onAddReminder({
-      memberId: remMemberId,
-      title: remTitle.trim(),
-      category: remCategory,
-      time: remTime,
-      enabled: true,
-    });
-    setRemTitle('');
-  };
-
-  const handleAddVisit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!visFacility.trim() || !visService.trim() || !visDate) return;
-    onAddVisit({
-      memberId: visMemberId,
-      facilityName: visFacility.trim(),
-      serviceType: visService.trim(),
-      date: visDate,
-      time: visTime,
-      notes: visNotes.trim(),
-    });
-    setVisNotes('');
-    if (prefillReason) onClearPrefillReason();
-  };
+  }, [activeMember?.id, members]);
 
   const calendarCells = useMemo(() => {
     const firstDay = new Date(calYear, calMonth, 1).getDay();
@@ -184,6 +131,95 @@ export const RemindersAgendaView: React.FC<RemindersAgendaViewProps> = ({
     }
     return sorted;
   }, [faskesVisits, selectedDate]);
+
+  const requestNotificationPermission = async () => {
+    if (typeof Notification === 'undefined') {
+      setNotifPermission('unsupported');
+      setNotifFeedback('Browser ini tidak mendukung Web Notification API.');
+      return;
+    }
+    const perm = await Notification.requestPermission();
+    setNotifPermission(perm);
+    if (perm === 'granted') {
+      new Notification('CEKRutin · Pengingat Aktif', {
+        body: 'Notifikasi pengingat rutinitas sehat dan jadwal Puskesmas telah diaktifkan.',
+        icon: '/pwa-192x192.png',
+      });
+      setNotifFeedback('Notifikasi browser berhasil diaktifkan dan diuji.');
+    } else {
+      setNotifFeedback('Izin notifikasi belum diberikan di pengaturan browser.');
+    }
+  };
+
+  const sendTestNotification = () => {
+    if (typeof Notification === 'undefined') {
+      setNotifFeedback('Browser tidak mendukung Notification API.');
+      return;
+    }
+    if (Notification.permission === 'granted') {
+      new Notification('CEKRutin · Pengingat Rutinitas Sehat', {
+        body: `Waktunya cek kebiasaan sehat untuk ${activeMember?.name || 'Keluarga'} — Ingat, Periksa, Jaga Sehat!`,
+        icon: '/pwa-192x192.png',
+      });
+      setNotifFeedback('Notifikasi uji coba dikirim.');
+    } else {
+      requestNotificationPermission();
+    }
+  };
+
+  if (members.length === 0 || !activeMember) {
+    return (
+      <div className="rounded-2xl bg-white border border-slate-200 p-8 text-center space-y-4 max-w-xl mx-auto">
+        <div className="w-12 h-12 rounded-2xl bg-amber-50 border border-amber-200 text-amber-600 flex items-center justify-center mx-auto">
+          <Bell className="w-6 h-6" />
+        </div>
+        <h1 className="text-xl font-extrabold text-slate-900">
+          Pengingat & Agenda Faskes
+        </h1>
+        <p className="text-sm text-slate-600 leading-relaxed">
+          Belum ada anggota keluarga terdaftar. Tambahkan profil anggota keluarga pertama Anda
+          untuk mulai menjadwalkan pengingat rutinitas dan kunjungan ke Puskesmas.
+        </p>
+        <button
+          type="button"
+          onClick={onAddFirstMember}
+          className="min-h-[46px] px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-sm font-semibold inline-flex items-center gap-2 cursor-pointer"
+        >
+          <UserPlus className="w-4 h-4" />
+          Tambah Anggota Keluarga Pertama
+        </button>
+      </div>
+    );
+  }
+
+  const handleAddReminder = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!remTitle.trim()) return;
+    onAddReminder({
+      memberId: remMemberId || activeMember.id,
+      title: remTitle.trim(),
+      category: remCategory,
+      time: remTime,
+      enabled: true,
+    });
+    setRemTitle('');
+  };
+
+  const handleAddVisit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!visFacility.trim() || !visService.trim() || !visDate) return;
+    onAddVisit({
+      memberId: visMemberId || activeMember.id,
+      facilityName: visFacility.trim(),
+      serviceType: visService.trim(),
+      date: visDate,
+      time: visTime,
+      notes: visNotes.trim(),
+    });
+    setVisNotes('');
+    if (prefillReason) onClearPrefillReason();
+  };
+
 
   const prevMonth = () => {
     if (calMonth === 0) {

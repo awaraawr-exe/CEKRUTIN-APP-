@@ -5,6 +5,7 @@ import {
   HeartPulse,
   PlusCircle,
   Trash2,
+  UserPlus,
 } from 'lucide-react';
 import {
   FamilyMember,
@@ -20,11 +21,12 @@ import {StatusIndicator} from '../components/StatusBadge';
 import {ChartMetric, HealthTrendChart} from '../components/HealthTrendChart';
 
 interface HealthCheckViewProps {
-  activeMember: FamilyMember;
+  activeMember: FamilyMember | null;
   records: HealthCheckRecord[];
   onAddHealthCheck: (record: Omit<HealthCheckRecord, 'id' | 'overallStatus' | 'bmi'>) => void;
   onDeleteHealthCheck: (recordId: string) => void;
   onQuickSchedulePuskesmas: (memberId: string, reason: string) => void;
+  onAddFirstMember: () => void;
 }
 
 export const HealthCheckView: React.FC<HealthCheckViewProps> = ({
@@ -33,27 +35,52 @@ export const HealthCheckView: React.FC<HealthCheckViewProps> = ({
   onAddHealthCheck,
   onDeleteHealthCheck,
   onQuickSchedulePuskesmas,
+  onAddFirstMember,
 }) => {
-  const memberRecords = useMemo(
-    () =>
-      records
-        .filter((r) => r.memberId === activeMember.id)
-        .sort((a, b) => new Date(b.recordedAt).getTime() - new Date(a.recordedAt).getTime()),
-    [records, activeMember.id],
-  );
+  const memberRecords = useMemo(() => {
+    if (!activeMember) return [];
+    return records
+      .filter((r) => r.memberId === activeMember.id)
+      .sort((a, b) => new Date(b.recordedAt).getTime() - new Date(a.recordedAt).getTime());
+  }, [records, activeMember]);
 
   const latest = memberRecords[0];
 
-  const [systolic, setSystolic] = useState<string>(latest ? String(latest.systolic) : '118');
-  const [diastolic, setDiastolic] = useState<string>(latest ? String(latest.diastolic) : '76');
+  const [systolic, setSystolic] = useState<string>(latest ? String(latest.systolic) : '120');
+  const [diastolic, setDiastolic] = useState<string>(latest ? String(latest.diastolic) : '80');
   const [glucose, setGlucose] = useState<string>(latest ? String(latest.glucose) : '95');
   const [glucoseType, setGlucoseType] = useState<GlucoseType>(latest ? latest.glucoseType : 'puasa');
-  const [cholesterol, setCholesterol] = useState<string>(latest ? String(latest.cholesterol) : '185');
+  const [cholesterol, setCholesterol] = useState<string>(latest ? String(latest.cholesterol) : '180');
   const [weightKg, setWeightKg] = useState<string>(latest ? String(latest.weightKg) : '60');
-  const [heightCm, setHeightCm] = useState<string>(latest ? String(latest.heightCm) : '162');
+  const [heightCm, setHeightCm] = useState<string>(latest ? String(latest.heightCm) : '165');
   const [notes, setNotes] = useState<string>('');
   const [chartMetric, setChartMetric] = useState<ChartMetric>('bp');
   const [savedBanner, setSavedBanner] = useState<string | null>(null);
+
+  if (!activeMember) {
+    return (
+      <div className="rounded-2xl bg-white border border-slate-200 p-8 text-center space-y-4 max-w-xl mx-auto">
+        <div className="w-12 h-12 rounded-2xl bg-sky-50 border border-sky-200 text-sky-700 flex items-center justify-center mx-auto">
+          <HeartPulse className="w-6 h-6" />
+        </div>
+        <h1 className="text-xl font-extrabold text-slate-900">
+          Cek Kesehatan & Grafik Tren
+        </h1>
+        <p className="text-sm text-slate-600 leading-relaxed">
+          Belum ada profil anggota keluarga yang tercatat. Tambahkan anggota keluarga pertama Anda
+          untuk mulai mencatat tekanan darah, gula darah, kolesterol, dan IMT.
+        </p>
+        <button
+          type="button"
+          onClick={onAddFirstMember}
+          className="min-h-[46px] px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-sm font-semibold inline-flex items-center gap-2 cursor-pointer"
+        >
+          <UserPlus className="w-4 h-4" />
+          Tambah Anggota Keluarga Pertama
+        </button>
+      </div>
+    );
+  }
 
   const parsedWeight = Number(weightKg) || 0;
   const parsedHeight = Number(heightCm) || 0;
